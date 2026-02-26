@@ -228,7 +228,14 @@
   width: 180px;
 }
 
-/* Split layout: upper 70% table with scroll, lower 30% waveform */
+/* Split layout: upper 70% table with scroll, lower 30% waveform – fixed, no page scroll */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 100vh;
+  overflow: hidden;
+}
 .app-split {
   display: flex;
   flex-direction: column;
@@ -241,7 +248,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: auto;
 }
 .app-top .error,
 .app-top .loading {
@@ -256,21 +263,16 @@
 }
 .app-bottom {
   flex: 0 0 30%;
-  min-height: 120px;
-  max-height: 35vh;
+  min-height: 200px;
   border-top: 1px solid #2a2a2a;
   background-color: #141414;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 /* Main content */
-.app {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-}
 .main {
   padding: 0 20px 20px;
   overflow: auto;
@@ -652,4 +654,146 @@
   color: #fff;
   font-weight: 600;
   cursor: pointer;
+}
+
+/* WAV waveform panel (lower 30%) */
+.wav-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 10px 20px;
+}
+.wav-panel-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.wav-panel-channel {
+  font-size: 0.9em;
+  font-weight: 600;
+  color: #e67e22;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.wav-panel-channel::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #d35400;
+}
+.wav-panel-folder-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85em;
+  color: #9a9a9a;
+  cursor: pointer;
+}
+.wav-panel-input-hidden {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.wav-panel-folder-input {
+  min-width: 200px;
+  padding: 6px 10px;
+  background-color: #0d0d0d;
+  border: 2px solid #d35400;
+  color: #fff;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+.wav-panel-btn {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 2px solid #d35400;
+  background: transparent;
+  color: #e67e22;
+  font-weight: 600;
+  cursor: pointer;
+}
+.wav-panel-btn:hover {
+  background: rgba(230, 126, 34, 0.15);
+}
+.wav-panel-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.wav-panel-error {
+  padding: 8px 0;
+  font-size: 0.85em;
+  color: #e88;
+  white-space: normal;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.wav-panel-graph-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 80px;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  background-color: #1a1210;
+  overflow: hidden;
+}
+.wav-panel-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 80px;
+}
+.wav-panel-zoom {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wav-panel-zoom-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 4px;
+  border: 1px solid #2a2a2a;
+  background: #252525;
+  color: #e4e4e4;
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1;
+}
+.wav-panel-zoom-btn:hover {
+  background: #353535;
+  border-color: #d35400;
+  color: #e67e22;
+}
+.wav-panel-zoom-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 0.8em;
+  color: #9a9a9a;
+}
+.wav-panel-nav-btn {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid #2a2a2a;
+  background: #252525;
+  color: #e4e4e4;
+  cursor: pointer;
+}
+.wav-panel-nav-btn:hover {
+  background: #353535;
+  color: #e67e22;
 }
