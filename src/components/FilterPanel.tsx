@@ -7,6 +7,9 @@ interface FilterPanelProps {
   onFiltersChange: (f: EarthquakeFilters) => void;
   onUpdate: () => void;
   loading?: boolean;
+  velocityTarget: string;
+  deltaVelocity: string;
+  onVelocityChange: (velocityTarget: string, deltaVelocity: string) => void;
 }
 
 function defaultStartTime(): string {
@@ -24,6 +27,9 @@ export function FilterPanel({
   onFiltersChange,
   onUpdate,
   loading,
+  velocityTarget,
+  deltaVelocity,
+  onVelocityChange,
 }: FilterPanelProps) {
   const isLast = filters.periodMode === 'last';
   const isFromDate = filters.periodMode === 'from_date';
@@ -34,25 +40,47 @@ export function FilterPanel({
   return (
     <div className="control-panel">
       <div className="control-panel-row">
-      <div className="control-group control-group--inline">
-        <span className="group-title-inline">Magnitude</span>
-        <input
-          type="text"
-          placeholder="Min"
-          value={filters.minmagnitude}
-          onChange={(e) =>
-            onFiltersChange({ ...filters, minmagnitude: e.target.value })
-          }
-        />
-        <input
-          type="text"
-          placeholder="Max"
-          value={filters.maxmagnitude}
-          onChange={(e) =>
-            onFiltersChange({ ...filters, maxmagnitude: e.target.value })
-          }
-        />
-      </div>
+        <div className="control-group control-group--inline velocity-group">
+          <span className="group-title-inline">Velocity</span>
+          <label className="velocity-row">
+            <span className="velocity-label">V target</span>
+            <input
+              type="number"
+              value={velocityTarget}
+              onChange={(e) => onVelocityChange(e.target.value, deltaVelocity)}
+            />
+            <span className="velocity-unit">km/h</span>
+          </label>
+          <label className="velocity-row">
+            <span className="velocity-label">ΔV</span>
+            <input
+              type="number"
+              value={deltaVelocity}
+              onChange={(e) => onVelocityChange(velocityTarget, e.target.value)}
+            />
+            <span className="velocity-unit">km/h</span>
+          </label>
+        </div>
+
+        <div className="control-group control-group--inline">
+          <span className="group-title-inline">Magnitude</span>
+          <input
+            type="text"
+            placeholder="Min"
+            value={filters.minmagnitude}
+            onChange={(e) =>
+              onFiltersChange({ ...filters, minmagnitude: e.target.value })
+            }
+          />
+          <input
+            type="text"
+            placeholder="Max"
+            value={filters.maxmagnitude}
+            onChange={(e) =>
+              onFiltersChange({ ...filters, maxmagnitude: e.target.value })
+            }
+          />
+        </div>
 
       <div className="control-group control-group--inline eq-period">
         <span className="group-title-inline">Eq period</span>

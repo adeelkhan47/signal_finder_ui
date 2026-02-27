@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import type { Earthquake } from '../types/earthquake';
+import type { Channel } from '../types/channel';
 
 /**
  * Parse date and hour from WAV filename.
@@ -174,6 +176,25 @@ const SECONDS_PER_HOUR = 3600;
 const MAX_DISPLAY_SAMPLES = 2 * 1024 * 1024;
 const WAV_READ_CHUNK = 256 * 1024;
 
+function inferChannelNickFromNames(names: string[]): string | null {
+  for (const name of names) {
+    const match = name.match(/^\s*([A-Za-z0-9]+)[\s_]/);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+interface WindowMetrics {
+  channelNick: string;
+  channelName: string | null;
+  distanceKm: number;
+  centerTargetMs: number;
+  centerMaxMs: number;
+  deltaMs: number;
+}
+
 interface WavHeader {
   dataOffset: number;
   dataSize: number;
@@ -251,7 +272,51 @@ async function readWavDownsampled(
   return true;
 }
 
-export function WavWaveformPanel() {
+interface WavWaveformPanelProps {
+  selectedEarthquake: Earthquake | null;
+  channels: Channel[];
+  velocityTarget: string;
+  deltaVelocity: string;
+}
+
+function formatClockWithDate(ms: number): string {
+  const d = new Date(ms);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = String(d.getFullYear()).slice(-2);
+  return `${hh}:${mm}:${ss}  ${day}/${month}/${year}`;
+}
+
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  const hh = String(h).padStart(2, '0');
+  const mm = String(m).padStart(2, '0');
+  const ss = String(s).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+
+function formatTimeTargetShort(ms: number): string {
+  const d = new Date(ms);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = String(d.getFullYear()).slice(-2);
+  return `${hh}:${mm}  ${day}/${month}/${year}`;
+}
+
+export function WavWaveformPanel({
+  selectedEarthquake,
+  channels,
+  velocityTarget,
+  deltaVelocity,
+}: WavWaveformPanelProps) {
   const [folderName, setFolderName] = useState<string>('');
   const [combinedSamples, setCombinedSamples] = useState<Float32Array | null>(null);
   const [sampleRate, setSampleRate] = useState(DEFAULT_SAMPLE_RATE);
@@ -263,12 +328,88 @@ export function WavWaveformPanel() {
   const [resizeKey, setResizeKey] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [wavChannelNick, setWavChannelNick] = useState<string | null>(null);
+  const [windowMetrics, setWindowMetrics] = useState<WindowMetrics | null>(null);
+  const [redLineMs, setRedLineMs] = useState<number | null>(null);
 
   useEffect(() => {
     const onResize = () => setResizeKey((k) => k + 1);
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
+
+  useEffect(() => {
+    if (!selectedEarthquake || !wavChannelNick) {
+      setWindowMetrics(null);
+      return;
+    }
+    const channel = channels.find(
+      (ch) => ch.nick_name && ch.nick_name.toLowerCase() === wavChannelNick.toLowerCase(),
+    ) ?? null;
+    const distances = selectedEarthquake.channel_distance;
+    let distRaw: string | undefined;
+    if (distances && typeof distances === 'object') {
+      const keysToTry = [
+        wavChannelNick,
+        wavChannelNick.toUpperCase(),
+        wavChannelNick.toLowerCase(),
+        channel?.nick_name ?? '',
+      ].filter(Boolean);
+      for (const k of keysToTry) {
+        if (k in distances) {
+          distRaw = distances[k] as string | undefined;
+          if (distRaw) break;
+        }
+      }
+      if (!distRaw) {
+        const nickLower = wavChannelNick.toLowerCase();
+        for (const key of Object.keys(distances)) {
+          if (key.toLowerCase().includes(nickLower)) {
+            distRaw = distances[key];
+            if (distRaw) break;
+          }
+        }
+      }
+    }
+    if (!distRaw) {
+      setWindowMetrics(null);
+      return;
+    }
+    const distanceKm = parseFloat(distRaw.replace(/\s*KM$/i, '').replace(/,/g, '.').trim());
+    if (!Number.isFinite(distanceKm) || distanceKm <= 0) {
+      setWindowMetrics(null);
+      return;
+    }
+    const vTarget = parseFloat(velocityTarget.replace(/,/g, '.'));
+    const dVel = parseFloat(deltaVelocity.replace(/,/g, '.')) || 0;
+    if (!Number.isFinite(vTarget) || vTarget <= 0) {
+      setWindowMetrics(null);
+      return;
+    }
+    const vMax = vTarget + (Number.isFinite(dVel) ? dVel : 0);
+    if (!Number.isFinite(vMax) || vMax <= 0) {
+      setWindowMetrics(null);
+      return;
+    }
+    const eqMs = parseInt(selectedEarthquake.time, 10);
+    if (!Number.isFinite(eqMs)) {
+      setWindowMetrics(null);
+      return;
+    }
+    const targetHours = distanceKm / vTarget;
+    const maxHours = distanceKm / vMax;
+    const centerTargetMs = eqMs - targetHours * SECONDS_PER_HOUR * 1000;
+    const centerMaxMs = eqMs - maxHours * SECONDS_PER_HOUR * 1000;
+    const deltaMs = centerMaxMs - centerTargetMs;
+    setWindowMetrics({
+      channelNick: wavChannelNick,
+      channelName: channel?.name ?? null,
+      distanceKm,
+      centerTargetMs,
+      centerMaxMs,
+      deltaMs,
+    });
+  }, [selectedEarthquake, wavChannelNick, channels, velocityTarget, deltaVelocity]);
 
   const loadAndCombine = useCallback(async (list: WavFileInfo[]) => {
     if (list.length === 0) {
@@ -358,6 +499,7 @@ export function WavWaveformPanel() {
           setCombinedSamples(null);
           setTimeRange(null);
         } else {
+          setWavChannelNick(inferChannelNickFromNames(allWavNames));
           await loadAndCombine(list);
         }
       } catch (e) {
@@ -382,11 +524,40 @@ export function WavWaveformPanel() {
       setError(msg);
       return;
     }
+    setWavChannelNick(inferChannelNickFromNames(allWavNames));
     setFolderName(list.length ? `WAVs (${list.length} files)` : '');
     setLoading(true);
     await loadAndCombine(list);
     setLoading(false);
   }, [loadAndCombine]);
+
+  const handleCanvasClick = useCallback(
+    (event: React.MouseEvent<HTMLCanvasElement>) => {
+      const canvas = canvasRef.current;
+      const samples = combinedSamples;
+      if (!canvas || !samples || !timeRange) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+
+      const padding = { top: 8, right: 40, bottom: 24, left: 8 };
+      const graphW = rect.width - padding.left - padding.right;
+      if (graphW <= 0) return;
+
+      const totalLen = samples.length;
+      const visibleLen = Math.max(1, Math.floor(totalLen / zoom));
+      const startSample = Math.max(0, Math.floor(pan * Math.max(0, totalLen - visibleLen)));
+      const endSample = Math.min(startSample + visibleLen, totalLen);
+
+      const t = (x - padding.left) / graphW;
+      if (t < 0 || t > 1) return;
+
+      const sampleAt = startSample + t * (endSample - startSample);
+      const timeMs = timeRange.start + (sampleAt / sampleRate) * 1000;
+      setRedLineMs(timeMs);
+    },
+    [combinedSamples, timeRange, zoom, pan, sampleRate],
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -485,7 +656,103 @@ export function WavWaveformPanel() {
         hourTimeMs += msPerHour;
       }
     }
-  }, [combinedSamples, sampleRate, zoom, pan, resizeKey, timeRange]);
+    if (rangeMs && windowMetrics) {
+      const drawMarker = (timeMs: number, color: string, lineWidthMultiplier = 1) => {
+        const sampleAt = ((timeMs - rangeMs.start) / 1000) * sampleRate;
+        const t = (sampleAt - startSample) / (endSample - startSample);
+        if (t < 0 || t > 1) return;
+        const x = padding.left + t * graphW;
+        ctx.strokeStyle = color;
+        ctx.setLineDash([]);
+        ctx.lineWidth = Math.max(1.5, dpr * lineWidthMultiplier);
+        ctx.beginPath();
+        ctx.moveTo(x, padding.top);
+        ctx.lineTo(x, padding.top + graphH);
+        ctx.stroke();
+      };
+      const drawTimeTargetLine = (timeMs: number) => {
+        if (timeMs < rangeMs.start || timeMs > rangeMs.end) return;
+        const sampleAt = ((timeMs - rangeMs.start) / 1000) * sampleRate;
+        const t = (sampleAt - startSample) / (endSample - startSample);
+        if (t < 0 || t > 1) return;
+        const x = padding.left + t * graphW;
+        ctx.strokeStyle = '#ffffff';
+        ctx.fillStyle = '#ffffff';
+        ctx.setLineDash([]);
+        ctx.lineWidth = Math.max(2, dpr * 2);
+        ctx.beginPath();
+        ctx.moveTo(x, padding.top);
+        ctx.lineTo(x, padding.top + graphH);
+        ctx.stroke();
+        const triSize = 8 * dpr;
+        ctx.beginPath();
+        ctx.moveTo(x, padding.top);
+        ctx.lineTo(x - triSize / 2, padding.top + triSize);
+        ctx.lineTo(x + triSize / 2, padding.top + triSize);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      };
+
+      const drawWindow = (startMs: number, endMs: number) => {
+        if (endMs <= startMs) return;
+        const sampleStart = ((startMs - rangeMs.start) / 1000) * sampleRate;
+        const sampleEnd = ((endMs - rangeMs.start) / 1000) * sampleRate;
+        const tStart = (sampleStart - startSample) / (endSample - startSample);
+        const tEnd = (sampleEnd - startSample) / (endSample - startSample);
+        const x1 = padding.left + Math.max(0, Math.min(1, tStart)) * graphW;
+        const x2 = padding.left + Math.max(0, Math.min(1, tEnd)) * graphW;
+        if (x2 <= padding.left || x1 >= padding.left + graphW || x2 <= x1) return;
+
+        ctx.save();
+        ctx.setLineDash([6 * dpr, 4 * dpr]);
+        ctx.strokeStyle = '#ffffff99';
+        ctx.lineWidth = dpr;
+
+        ctx.beginPath();
+        ctx.moveTo(x1, padding.top);
+        ctx.lineTo(x1, padding.top + graphH);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(x2, padding.top);
+        ctx.lineTo(x2, padding.top + graphH);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(x1, padding.top + 4 * dpr);
+        ctx.lineTo(x2, padding.top + 4 * dpr);
+        ctx.moveTo(x1, padding.top + graphH - 4 * dpr);
+        ctx.lineTo(x2, padding.top + graphH - 4 * dpr);
+        ctx.stroke();
+
+        ctx.restore();
+      };
+
+      const halfWindowMs = Math.abs(windowMetrics.deltaMs);
+      const leftMs = windowMetrics.centerTargetMs - halfWindowMs;
+      const rightMs = windowMetrics.centerTargetMs + halfWindowMs;
+
+      drawWindow(leftMs, rightMs);
+      drawTimeTargetLine(windowMetrics.centerTargetMs);
+      drawMarker(windowMetrics.centerMaxMs, '#fb923c');
+    }
+
+    if (rangeMs && redLineMs != null) {
+      const sampleAt = ((redLineMs - rangeMs.start) / 1000) * sampleRate;
+      const t = (sampleAt - startSample) / (endSample - startSample);
+      if (t >= 0 && t <= 1) {
+        const x = padding.left + t * graphW;
+        ctx.strokeStyle = '#ff4d4f';
+        ctx.setLineDash([]);
+        ctx.lineWidth = dpr;
+        ctx.beginPath();
+        ctx.moveTo(x, padding.top);
+        ctx.lineTo(x, padding.top + graphH);
+        ctx.stroke();
+      }
+    }
+  }, [combinedSamples, sampleRate, zoom, pan, resizeKey, timeRange, windowMetrics, redLineMs]);
 
   const zoomIn = () => setZoom((z) => Math.min(100, z * 1.5));
   const zoomOut = () => setZoom((z) => Math.max(1, z / 1.5));
@@ -495,7 +762,9 @@ export function WavWaveformPanel() {
   return (
     <div className="wav-panel">
       <div className="wav-panel-controls">
-        <span className="wav-panel-channel">Ch.1</span>
+        <span className="wav-panel-channel">
+          {wavChannelNick ? `Ch. ${wavChannelNick}` : 'Ch. —'}
+        </span>
         <label className="wav-panel-folder-label">
           Name of the wavs folder (finder)
           <input
@@ -523,6 +792,27 @@ export function WavWaveformPanel() {
             ? 'Browse…'
             : 'Select folder…'}
         </button>
+        {windowMetrics ? (
+          <div className="wav-panel-values">
+            <span className="wav-panel-value-item">
+              <strong>Time targ.</strong> {formatTimeTargetShort(windowMetrics.centerTargetMs)}
+            </span>
+            <span className="wav-panel-value-sep">|</span>
+            <span className="wav-panel-value-item">
+              <strong>ΔT</strong> {formatDuration(Math.abs(windowMetrics.deltaMs))}
+            </span>
+            <span className="wav-panel-value-sep">|</span>
+            <span className="wav-panel-value-item">
+              <strong>Dist.</strong> {windowMetrics.distanceKm.toFixed(0)} km
+            </span>
+          </div>
+        ) : wavChannelNick && (
+          <div className="wav-panel-values wav-panel-values--hint">
+            {selectedEarthquake
+              ? 'No distance for this channel in selected earthquake. Check channel_distance keys.'
+              : 'Select an earthquake in the table above to see Time target, ΔT and Distance.'}
+          </div>
+        )}
       </div>
       {error && (
         <div className="wav-panel-error" role="alert">
@@ -530,7 +820,11 @@ export function WavWaveformPanel() {
         </div>
       )}
       <div className="wav-panel-graph-wrap">
-        <canvas ref={canvasRef} className="wav-panel-canvas" />
+        <canvas
+          ref={canvasRef}
+          className="wav-panel-canvas"
+          onClick={handleCanvasClick}
+        />
         <div className="wav-panel-zoom">
           <button type="button" className="wav-panel-zoom-btn" onClick={zoomIn} title="Zoom in" aria-label="Zoom in">
             +

@@ -62,6 +62,28 @@
   font-size: 0.9em;
   white-space: nowrap;
 }
+
+.control-group.velocity-group {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.velocity-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+  color: #e67e22;
+}
+.velocity-label {
+  min-width: 64px;
+  text-align: right;
+}
+.velocity-unit {
+  font-size: 0.8em;
+  color: #e67e22;
+  white-space: nowrap;
+}
 /* Input fields: orange & black bold theme, increased width */
 .control-panel input[type="text"],
 .control-panel input[type="number"],
@@ -743,6 +765,60 @@
   border-radius: 4px;
   background-color: #1a1210;
   overflow: hidden;
+}
+.wav-panel-values {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px 14px;
+  flex-wrap: wrap;
+  padding: 6px 12px;
+  background: rgba(211, 84, 0, 0.12);
+  border: 1px solid rgba(230, 126, 34, 0.5);
+  border-radius: 6px;
+  font-size: 0.9em;
+  color: #fcd34d;
+}
+.wav-panel-value-item {
+  white-space: nowrap;
+}
+.wav-panel-value-item strong {
+  color: #e67e22;
+  margin-right: 4px;
+}
+.wav-panel-value-sep {
+  color: rgba(230, 126, 34, 0.7);
+  font-weight: 700;
+}
+.wav-panel-values--hint {
+  background: rgba(0, 0, 0, 0.4);
+  border-color: #3a3a3a;
+  color: #9a9a9a;
+  font-size: 0.85em;
+}
+.wav-panel-metrics {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.85);
+  border: 1px solid rgba(230, 126, 34, 0.5);
+  border-radius: 4px;
+  font-size: 0.8em;
+  color: #e4e4e4;
+  line-height: 1.4;
+  z-index: 2;
+}
+.wav-panel-metrics-title {
+  font-weight: 700;
+  color: #e67e22;
+  margin-bottom: 4px;
+}
+.wav-panel-metrics-outside {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(230, 126, 34, 0.3);
+  font-size: 0.85em;
+  color: #fcd34d;
 }
 .wav-panel-canvas {
   display: block;
