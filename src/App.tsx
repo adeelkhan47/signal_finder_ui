@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { FilterPanel } from './components/FilterPanel'
-import { EarthquakeTable } from './components/EarthquakeTable'
+import { EarthquakeTable, PAGE_SIZE, FIELDS_COLUMN_CONFIG } from './components/EarthquakeTable'
 import { WavWaveformPanel } from './components/WavWaveformPanel'
 import { fetchEarthquakes } from './services/api'
+import { getCustomField, editCustomField } from './services/customFieldApi'
 import type { Earthquake, EarthquakeFilters } from './types/earthquake'
 import type { Channel } from './types/channel'
+import type { CustomFieldData, EditCustomFieldPayload } from './types/customField'
 import { fetchChannels } from './services/channelsApi'
 import './App.css'
 
@@ -30,12 +32,19 @@ function App() {
       maxlatitude: '',
       minlongitude: '',
       maxlongitude: '',
+      timeDisplayMode: 'local',
+      utcOffsetHours: '',
     };
   })
   const [velocityTarget, setVelocityTarget] = useState('1000')
   const [deltaVelocity, setDeltaVelocity] = useState('5')
   const [page, setPage] = useState(1)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [customFieldsByCode, setCustomFieldsByCode] = useState<Record<string, CustomFieldData>>({})
+  const [customFieldsLoading, setCustomFieldsLoading] = useState(false)
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(FIELDS_COLUMN_CONFIG.map((c) => [c.key, true]))
+  )
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -73,6 +82,54 @@ function App() {
     load()
   }, []) // initial load only; Update button triggers load() with current filters
 
+  // Fetch custom fields for current page's earthquakes that have a non-empty code
+  useEffect(() => {
+    if (!earthquakes.length) {
+      setCustomFieldsByCode({})
+      return
+    }
+    const start = (page - 1) * PAGE_SIZE
+    const pageData = earthquakes.slice(start, start + PAGE_SIZE)
+    const codes = [...new Set(pageData.map((eq) => eq.code).filter((c) => c != null && String(c).trim() !== ''))]
+    if (codes.length === 0) {
+      setCustomFieldsByCode({})
+      return
+    }
+    let cancelled = false
+    setCustomFieldsLoading(true)
+    Promise.all(codes.map((code) => getCustomField(code)))
+      .then((results) => {
+        if (cancelled) return
+        const next: Record<string, CustomFieldData> = {}
+        results.forEach((data) => {
+          if (data) next[data.code] = data
+        })
+        setCustomFieldsByCode(next)
+      })
+      .catch(() => {
+        if (!cancelled) setCustomFieldsByCode({})
+      })
+      .finally(() => {
+        if (!cancelled) setCustomFieldsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [earthquakes, page])
+
+  const handleEditCustomField = useCallback(
+    async (id: number, payload: EditCustomFieldPayload) => {
+      try {
+        const updated = await editCustomField(id, payload)
+        setCustomFieldsByCode((prev) => ({ ...prev, [updated.code]: updated }))
+        await load()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to update custom field')
+      }
+    },
+    [load]
+  )
+
   return (
     <div className="app">
       <header className="header">
@@ -90,6 +147,8 @@ function App() {
           setVelocityTarget(v)
           setDeltaVelocity(dv)
         }}
+        visibleColumns={visibleColumns}
+        onVisibleColumnsChange={setVisibleColumns}
       />
 
       <div className="app-split">
@@ -111,6 +170,12 @@ function App() {
               onPageChange={setPage}
               selectedId={selectedId}
               onSelectRow={setSelectedId}
+              customFieldsByCode={customFieldsByCode}
+              customFieldsLoading={customFieldsLoading}
+              onEditCustomField={handleEditCustomField}
+              visibleColumns={visibleColumns}
+              timeDisplayMode={filters.timeDisplayMode}
+              utcOffsetHours={filters.utcOffsetHours}
             />
           )}
         </section>
@@ -121,6 +186,7 @@ function App() {
             channels={channels}
             velocityTarget={velocityTarget}
             deltaVelocity={deltaVelocity}
+            utcOffsetHours={filters.utcOffsetHours}
           />
         </section>
       </div>

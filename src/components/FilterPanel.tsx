@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import type { EarthquakeFilters, PeriodMode, RegionMode } from '../types/earthquake';
+import type { EarthquakeFilters, PeriodMode, RegionMode, TimeDisplayMode } from '../types/earthquake';
+import type { VisibleColumns } from './EarthquakeTable';
 import { ChannelsDialog } from './ChannelsDialog';
+import { FieldsDialog } from './FieldsDialog';
 
 interface FilterPanelProps {
   filters: EarthquakeFilters;
@@ -10,6 +12,8 @@ interface FilterPanelProps {
   velocityTarget: string;
   deltaVelocity: string;
   onVelocityChange: (velocityTarget: string, deltaVelocity: string) => void;
+  visibleColumns: VisibleColumns;
+  onVisibleColumnsChange: (visible: VisibleColumns) => void;
 }
 
 function defaultStartTime(): string {
@@ -30,12 +34,17 @@ export function FilterPanel({
   velocityTarget,
   deltaVelocity,
   onVelocityChange,
+  visibleColumns,
+  onVisibleColumnsChange,
 }: FilterPanelProps) {
   const isLast = filters.periodMode === 'last';
   const isFromDate = filters.periodMode === 'from_date';
   const isAllWorld = filters.regionMode === 'all_world';
   const isRegion = filters.regionMode === 'region';
+  const isLocalTime = filters.timeDisplayMode === 'local';
+  const isUtcTime = filters.timeDisplayMode === 'utc';
   const [channelsOpen, setChannelsOpen] = useState(false);
+  const [fieldsOpen, setFieldsOpen] = useState(false);
 
   return (
     <div className="control-panel">
@@ -143,6 +152,43 @@ export function FilterPanel({
         )}
       </div>
 
+      <div className="control-group control-group--inline time-group">
+        <span className="group-title-inline">Time</span>
+        <label className="radio-label">
+          <input
+            type="radio"
+            name="timeDisplay"
+            checked={isLocalTime}
+            onChange={() =>
+              onFiltersChange({ ...filters, timeDisplayMode: 'local' as TimeDisplayMode })
+            }
+          />
+          Local
+        </label>
+        <label className="radio-label">
+          <input
+            type="radio"
+            name="timeDisplay"
+            checked={isUtcTime}
+            onChange={() =>
+              onFiltersChange({ ...filters, timeDisplayMode: 'utc' as TimeDisplayMode })
+            }
+          />
+          UTC
+        </label>
+        <input
+          type="text"
+          className="utc-offset-input"
+          placeholder="UTC offset (hours)"
+          value={filters.utcOffsetHours}
+          onChange={(e) =>
+            onFiltersChange({ ...filters, utcOffsetHours: e.target.value })
+          }
+          title="Offset in hours to add to EQ time for local time (e.g. -5 or 5.5)"
+          aria-label="UTC offset hours"
+        />
+      </div>
+
       <div className="control-group region-group">
         <div className="region-group-row">
           <span className="group-title-inline">Region</span>
@@ -241,12 +287,23 @@ export function FilterPanel({
           placeholder="Search"
           aria-label="Search"
         />
-        <button type="button">Fields</button>
-        <button type="button">Purge</button>
-        <button type="button">Save</button>
+        <button
+          type="button"
+          className="fields-btn"
+          onClick={() => setFieldsOpen(true)}
+          title="Show or hide table columns"
+        >
+          Fields
+        </button>
       </div>
       </div>
       <ChannelsDialog open={channelsOpen} onClose={() => setChannelsOpen(false)} />
+      <FieldsDialog
+        open={fieldsOpen}
+        onClose={() => setFieldsOpen(false)}
+        visibleColumns={visibleColumns}
+        onVisibleColumnsChange={onVisibleColumnsChange}
+      />
     </div>
   );
 }

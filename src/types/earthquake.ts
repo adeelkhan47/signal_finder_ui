@@ -39,6 +39,7 @@ export interface EarthquakesResponse {
 
 export type PeriodMode = 'last' | 'from_date';
 export type RegionMode = 'all_world' | 'region';
+export type TimeDisplayMode = 'local' | 'utc';
 
 export interface EarthquakeFilters {
   periodMode: PeriodMode;
@@ -52,4 +53,8 @@ export interface EarthquakeFilters {
   maxlatitude: string;
   minlongitude: string;
   maxlongitude: string;
+  /** Display earthquake times in local time (EQ time + UTC offset) or UTC */
+  timeDisplayMode: TimeDisplayMode;
+  /** UTC offset in hours to add to EQ time for local display (e.g. -5, 5.5) */
+  utcOffsetHours: string;
 }

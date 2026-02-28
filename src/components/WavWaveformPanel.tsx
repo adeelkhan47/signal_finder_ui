@@ -41,6 +41,8 @@ interface GetWavResult {
   allWavNames: string[];
   /** When using folder picker: number of entries seen (0 = folder returned empty) */
   entriesCount?: number;
+  /** When using file input with webkitdirectory: folder name from first file's path */
+  folderName?: string;
 }
 
 async function ensureReadPermission(handle: FileSystemDirectoryHandle): Promise<boolean> {
@@ -127,11 +129,17 @@ async function getWavFilesFromHandle(handle: FileSystemDirectoryHandle): Promise
 async function getWavFilesFromInput(files: FileList | null): Promise<GetWavResult> {
   const list: WavFileInfo[] = [];
   const allWavNames: string[] = [];
+  let folderName: string | undefined;
   if (!files || files.length === 0) {
     console.log('[WavWaveformPanel] File input: no files selected');
     return { list, allWavNames };
   }
-  console.group('[WavWaveformPanel] Files selected via input (count:', files.length, ')');
+  const firstFile = files[0];
+  const relativePath = (firstFile as File & { webkitRelativePath?: string }).webkitRelativePath;
+  if (relativePath && relativePath.includes('/')) {
+    folderName = relativePath.split('/')[0];
+  }
+  console.group('[WavWaveformPanel] Files selected via input (count:', files.length, folderName ? `, folder: ${folderName}` : '', ')');
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     if (file!.name.toLowerCase().endsWith('.wav')) {
@@ -146,7 +154,7 @@ async function getWavFilesFromInput(files: FileList | null): Promise<GetWavResul
   allWavNames.forEach((name, i) => console.log(`  [${i + 1}] ${name}`));
   console.groupEnd();
   list.sort((a, b) => a.startTime - b.startTime);
-  return { list, allWavNames };
+  return { list, allWavNames, folderName };
 }
 
 const EXPECTED_FORMAT =
@@ -277,6 +285,8 @@ interface WavWaveformPanelProps {
   channels: Channel[];
   velocityTarget: string;
   deltaVelocity: string;
+  /** UTC offset in hours for local time (EQ time + UTC); used for velocity calc */
+  utcOffsetHours?: string;
 }
 
 function formatClockWithDate(ms: number): string {
@@ -316,6 +326,7 @@ export function WavWaveformPanel({
   channels,
   velocityTarget,
   deltaVelocity,
+  utcOffsetHours = '',
 }: WavWaveformPanelProps) {
   const [folderName, setFolderName] = useState<string>('');
   const [combinedSamples, setCombinedSamples] = useState<Float32Array | null>(null);
@@ -325,6 +336,7 @@ export function WavWaveformPanel({
   const [error, setError] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState(0);
+  const [verticalZoom, setVerticalZoom] = useState(1);
   const [resizeKey, setResizeKey] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -516,7 +528,7 @@ export function WavWaveformPanel({
 
   const onInputFiles = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     setError(null);
-    const { list, allWavNames } = await getWavFilesFromInput(e.target.files);
+    const { list, allWavNames, folderName: inputFolderName } = await getWavFilesFromInput(e.target.files);
     e.target.value = '';
     if (list.length === 0) {
       const msg = buildNoMatchError(allWavNames);
@@ -525,7 +537,7 @@ export function WavWaveformPanel({
       return;
     }
     setWavChannelNick(inferChannelNickFromNames(allWavNames));
-    setFolderName(list.length ? `WAVs (${list.length} files)` : '');
+    setFolderName(inputFolderName ?? '');
     setLoading(true);
     await loadAndCombine(list);
     setLoading(false);
@@ -555,6 +567,42 @@ export function WavWaveformPanel({
       const sampleAt = startSample + t * (endSample - startSample);
       const timeMs = timeRange.start + (sampleAt / sampleRate) * 1000;
       setRedLineMs(timeMs);
+    },
+    [combinedSamples, timeRange, zoom, pan, sampleRate],
+  );
+
+  const handleCanvasWheel = useCallback(
+    (e: React.WheelEvent<HTMLCanvasElement>) => {
+      if (!combinedSamples || !timeRange) return;
+      const delta = e.deltaY > 0 ? -1 : 1;
+      if (e.shiftKey) {
+        setVerticalZoom((v) => Math.max(1, Math.min(20, v + delta)));
+      } else {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const padding = { left: 8, right: 40 };
+        const graphW = rect.width - padding.left - padding.right;
+        if (graphW <= 0) return;
+        const x = e.clientX - rect.left - padding.left;
+        const t = Math.max(0, Math.min(1, x / graphW));
+        const totalLen = combinedSamples.length;
+        const visibleLen = Math.max(1, Math.floor(totalLen / zoom));
+        const startSample = Math.max(0, Math.floor(pan * Math.max(0, totalLen - visibleLen)));
+        const anchorSample = startSample + t * visibleLen;
+        const factor = delta > 0 ? 1.25 : 1 / 1.25;
+        setZoom((z) => {
+          const newZ = Math.max(1, Math.min(100, z * factor));
+          setPan((p) => {
+            const newVisibleLen = Math.max(1, Math.floor(totalLen / newZ));
+            const maxStart = Math.max(0, totalLen - newVisibleLen);
+            const newStart = Math.max(0, Math.min(maxStart, anchorSample - t * newVisibleLen));
+            return maxStart > 0 ? newStart / maxStart : 0;
+          });
+          return newZ;
+        });
+      }
+      e.preventDefault();
     },
     [combinedSamples, timeRange, zoom, pan, sampleRate],
   );
@@ -602,7 +650,7 @@ export function WavWaveformPanel({
     const midVal = (minVal + maxVal) / 2;
 
     const midY = padding.top + graphH / 2;
-    const amp = (graphH / 2) * 0.85 / (range / 2);
+    const amp = ((graphH / 2) * 0.85) / (range / 2) * verticalZoom;
     ctx.strokeStyle = '#c4a77d';
     ctx.lineWidth = Math.max(1, (dpr * 1.5) | 0);
     ctx.lineJoin = 'round';
@@ -752,12 +800,74 @@ export function WavWaveformPanel({
         ctx.stroke();
       }
     }
-  }, [combinedSamples, sampleRate, zoom, pan, resizeKey, timeRange, windowMetrics, redLineMs]);
+  }, [combinedSamples, sampleRate, zoom, pan, verticalZoom, resizeKey, timeRange, windowMetrics, redLineMs]);
 
-  const zoomIn = () => setZoom((z) => Math.min(100, z * 1.5));
-  const zoomOut = () => setZoom((z) => Math.max(1, z / 1.5));
+  const zoomIn = useCallback(() => {
+    setZoom((z) => {
+      const newZ = Math.min(100, z * 1.5);
+      if (newZ === z) return z;
+      setPan((p) => {
+        if (!combinedSamples || !timeRange) return p;
+        const totalLen = combinedSamples.length;
+        const visibleLen = Math.max(1, Math.floor(totalLen / z));
+        const startSample = Math.max(0, Math.floor(p * Math.max(0, totalLen - visibleLen)));
+        let anchorSample = startSample + visibleLen / 2;
+        if (redLineMs != null && timeRange.start <= redLineMs && redLineMs <= timeRange.end) {
+          const redLineSample = ((redLineMs - timeRange.start) / 1000) * sampleRate;
+          if (redLineSample >= 0 && redLineSample < totalLen) anchorSample = redLineSample;
+        }
+        const newVisibleLen = Math.max(1, Math.floor(totalLen / newZ));
+        const maxStart = Math.max(0, totalLen - newVisibleLen);
+        const newStart = Math.max(0, Math.min(maxStart, anchorSample - newVisibleLen / 2));
+        return maxStart > 0 ? newStart / maxStart : 0;
+      });
+      return newZ;
+    });
+  }, [combinedSamples, timeRange, redLineMs, sampleRate]);
+  const zoomOut = useCallback(() => {
+    setZoom((z) => {
+      const newZ = Math.max(1, z / 1.5);
+      if (newZ === z) return z;
+      setPan((p) => {
+        if (!combinedSamples || !timeRange) return p;
+        const totalLen = combinedSamples.length;
+        const visibleLen = Math.max(1, Math.floor(totalLen / z));
+        const startSample = Math.max(0, Math.floor(p * Math.max(0, totalLen - visibleLen)));
+        let anchorSample = startSample + visibleLen / 2;
+        if (redLineMs != null && timeRange.start <= redLineMs && redLineMs <= timeRange.end) {
+          const redLineSample = ((redLineMs - timeRange.start) / 1000) * sampleRate;
+          if (redLineSample >= 0 && redLineSample < totalLen) anchorSample = redLineSample;
+        }
+        const newVisibleLen = Math.max(1, Math.floor(totalLen / newZ));
+        const maxStart = Math.max(0, totalLen - newVisibleLen);
+        const newStart = Math.max(0, Math.min(maxStart, anchorSample - newVisibleLen / 2));
+        return maxStart > 0 ? newStart / maxStart : 0;
+      });
+      return newZ;
+    });
+  }, [combinedSamples, timeRange, redLineMs, sampleRate]);
+  const verticalZoomIn = () => setVerticalZoom((v) => Math.min(20, v + 1));
+  const verticalZoomOut = () => setVerticalZoom((v) => Math.max(1, v - 1));
   const panLeft = () => setPan((p) => Math.max(0, p - 0.1));
   const panRight = () => setPan((p) => Math.min(1, p + 0.1));
+
+  const centerOnTarget = useCallback(() => {
+    if (!combinedSamples || !timeRange || !windowMetrics) return;
+    const totalLen = combinedSamples.length;
+    const totalTimeMs = timeRange.end - timeRange.start;
+    if (totalTimeMs <= 0) return;
+    const centerTargetMs = windowMetrics.centerTargetMs;
+    const deltaMs = Math.abs(windowMetrics.deltaMs);
+    const centerSample = ((centerTargetMs - timeRange.start) / 1000) * sampleRate;
+    if (centerSample < 0 || centerSample >= totalLen) return;
+    const visibleTimeMs = Math.max(totalTimeMs / 100, 2.5 * deltaMs);
+    const newZoom = Math.max(1, Math.min(100, totalTimeMs / visibleTimeMs));
+    const newVisibleLen = Math.max(1, Math.floor(totalLen / newZoom));
+    const maxStart = Math.max(0, totalLen - newVisibleLen);
+    const newStart = Math.max(0, Math.min(maxStart, centerSample - newVisibleLen / 2));
+    setZoom(newZoom);
+    setPan(maxStart > 0 ? newStart / maxStart : 0);
+  }, [combinedSamples, timeRange, windowMetrics, sampleRate]);
 
   return (
     <div className="wav-panel">
@@ -805,6 +915,39 @@ export function WavWaveformPanel({
             <span className="wav-panel-value-item">
               <strong>Dist.</strong> {windowMetrics.distanceKm.toFixed(0)} km
             </span>
+            <span className="wav-panel-value-sep">|</span>
+            <button
+              type="button"
+              className="wav-panel-center-btn"
+              onClick={centerOnTarget}
+              disabled={!combinedSamples?.length || !timeRange}
+              title="Center view on target line and zoom to fit"
+              aria-label="Center on target line"
+            >
+              Center
+            </button>
+            <span className="wav-panel-value-right">
+              <span className="wav-panel-value-sep">|</span>
+              <span className="wav-panel-value-item">
+                <strong>Red line T:</strong>{' '}
+                {redLineMs != null ? formatTimeTargetShort(redLineMs) : '—'}
+              </span>
+              <span className="wav-panel-value-sep">|</span>
+              <span className="wav-panel-value-item">
+                <strong>V:</strong>{' '}
+                {(() => {
+                  if (redLineMs == null || !selectedEarthquake) return '—';
+                  const eqMs = parseInt(selectedEarthquake.time, 10);
+                  if (!Number.isFinite(eqMs)) return '—';
+                  const offsetHours = parseFloat(String(utcOffsetHours).trim()) || 0;
+                  const eqLocalMs = eqMs + offsetHours * 3600 * 1000;
+                  const travelTimeMs = Math.abs(redLineMs - eqLocalMs);
+                  if (travelTimeMs < 1000) return '—';
+                  const velocityKmh = (windowMetrics.distanceKm * 3600 * 1000) / travelTimeMs;
+                  return `${velocityKmh.toLocaleString(undefined, { maximumFractionDigits: 0 })} km/h`;
+                })()}
+              </span>
+            </span>
           </div>
         ) : wavChannelNick && (
           <div className="wav-panel-values wav-panel-values--hint">
@@ -820,24 +963,30 @@ export function WavWaveformPanel({
         </div>
       )}
       <div className="wav-panel-graph-wrap">
-        <canvas
-          ref={canvasRef}
-          className="wav-panel-canvas"
-          onClick={handleCanvasClick}
-        />
-        <div className="wav-panel-zoom">
-          <button type="button" className="wav-panel-zoom-btn" onClick={zoomIn} title="Zoom in" aria-label="Zoom in">
+        <div className="wav-panel-canvas-wrap">
+          <canvas
+            ref={canvasRef}
+            className="wav-panel-canvas"
+            onClick={handleCanvasClick}
+            onWheel={handleCanvasWheel}
+          />
+          <div className="wav-panel-zoom" title="Vertical zoom (amplitude)">
+          <button type="button" className="wav-panel-zoom-btn" onClick={verticalZoomIn} title="Vertical zoom in" aria-label="Vertical zoom in">
             +
           </button>
-          <button type="button" className="wav-panel-zoom-btn" onClick={zoomOut} title="Zoom out" aria-label="Zoom out">
+          <button type="button" className="wav-panel-zoom-btn" onClick={verticalZoomOut} title="Vertical zoom out" aria-label="Vertical zoom out">
             −
           </button>
+        </div>
         </div>
       </div>
       <div className="wav-panel-zoom-hint">
         <button type="button" className="wav-panel-nav-btn" onClick={panLeft} aria-label="Pan left">←</button>
-        <span>Zoom: {zoom.toFixed(1)}×</span>
+        <span className="wav-panel-zoom-label">Zoom: {zoom.toFixed(1)}×</span>
         <button type="button" className="wav-panel-nav-btn" onClick={panRight} aria-label="Pan right">→</button>
+        <button type="button" className="wav-panel-zoom-h-btn" onClick={zoomOut} title="Zoom out (time)" aria-label="Horizontal zoom out">−</button>
+        <button type="button" className="wav-panel-zoom-h-btn" onClick={zoomIn} title="Zoom in (time)" aria-label="Horizontal zoom in">+</button>
+        <span className="wav-panel-zoom-v-label" title="Vertical zoom">V: {verticalZoom}×</span>
       </div>
     </div>
   );

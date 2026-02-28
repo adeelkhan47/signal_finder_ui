@@ -1,6 +1,14 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { Earthquake } from '../types/earthquake';
+import type { TimeDisplayMode } from '../types/earthquake';
+import type { CustomFieldData, EditCustomFieldPayload } from '../types/customField';
 import { formatTimestamp, parseCommaSeparated, formatChannelDistance, formatCoord, formatDepth } from '../utils/format';
+
+const CUSTOM_FIELD_COLS = [
+  { key: 'custom_field_1' as const, label: 'custom-1' },
+  { key: 'custom_field_2' as const, label: 'custom-2' },
+  { key: 'custom_field_3' as const, label: 'custom-3' },
+];
 
 const PAGE_SIZE = 30;
 
@@ -39,6 +47,13 @@ const TABLE_COLUMNS: Col[] = [
   { key: 'magType', label: 'magType', pills: true },
 ];
 
+/** Column config for Fields dialog: key + label for show/hide toggles */
+export const FIELDS_COLUMN_CONFIG = [
+  ...TABLE_COLUMNS.map(({ key, label }) => ({ key, label })),
+  ...CUSTOM_FIELD_COLS.map(({ key, label }) => ({ key, label })),
+  { key: 'channel_distance', label: 'Channel distances' },
+];
+
 const PILL_VARIANTS = ['pill--teal', 'pill--amber', 'pill--violet', 'pill--rose', 'pill--sky', 'pill--emerald', 'pill--coral', 'pill--indigo'];
 
 function pillVariant(value: string): string {
@@ -60,12 +75,20 @@ function Pills({ values, muted = false }: { values: string[]; muted?: boolean })
   );
 }
 
+export type VisibleColumns = Record<string, boolean>;
+
 interface EarthquakeTableProps {
   earthquakes: Earthquake[];
   page: number;
   onPageChange: (page: number) => void;
   selectedId: string | null;
   onSelectRow: (id: string | null) => void;
+  customFieldsByCode: Record<string, CustomFieldData>;
+  customFieldsLoading: boolean;
+  onEditCustomField: (id: number, payload: EditCustomFieldPayload) => Promise<void>;
+  visibleColumns?: VisibleColumns;
+  timeDisplayMode?: TimeDisplayMode;
+  utcOffsetHours?: string;
 }
 
 /** Collect sorted channel keys from all earthquakes (ch1, ch2, ch3, ...) */
@@ -84,17 +107,64 @@ function getChannelKeys(earthquakes: Earthquake[]): string[] {
   });
 }
 
+function isColumnVisible(key: string, visibleColumns?: VisibleColumns): boolean {
+  if (visibleColumns == null) return true;
+  return visibleColumns[key] !== false;
+}
+
+/** Apply time display mode: local = EQ time + UTC offset (hours), utc = raw */
+function getDisplayTimeMs(msStr: string, timeDisplayMode?: TimeDisplayMode, utcOffsetHours?: string): number {
+  const n = parseInt(msStr, 10);
+  if (Number.isNaN(n)) return 0;
+  if (timeDisplayMode !== 'local' || utcOffsetHours == null || utcOffsetHours.trim() === '') return n;
+  const offsetHours = parseFloat(utcOffsetHours.trim());
+  if (Number.isNaN(offsetHours)) return n;
+  return n + offsetHours * 3600 * 1000;
+}
+
 export function EarthquakeTable({
   earthquakes,
   page,
   onPageChange,
   selectedId,
   onSelectRow,
+  customFieldsByCode,
+  customFieldsLoading,
+  onEditCustomField,
+  visibleColumns,
+  timeDisplayMode = 'local',
+  utcOffsetHours = '',
 }: EarthquakeTableProps) {
+  const [editingCustomFieldId, setEditingCustomFieldId] = useState<number | null>(null);
+  const [draftValues, setDraftValues] = useState<EditCustomFieldPayload>({ custom_field_1: '', custom_field_2: '', custom_field_3: '' });
   const start = (page - 1) * PAGE_SIZE;
   const pageData = earthquakes.slice(start, start + PAGE_SIZE);
   const totalPages = Math.max(1, Math.ceil(earthquakes.length / PAGE_SIZE));
   const channelKeys = useMemo(() => getChannelKeys(earthquakes), [earthquakes]);
+
+  const getValuesForRow = (cf: CustomFieldData) =>
+    editingCustomFieldId === cf.id
+      ? draftValues
+      : {
+          custom_field_1: cf.custom_field_1 ?? '',
+          custom_field_2: cf.custom_field_2 ?? '',
+          custom_field_3: cf.custom_field_3 ?? '',
+        };
+
+  const handleCustomFieldFocus = (cf: CustomFieldData) => {
+    setEditingCustomFieldId(cf.id);
+    setDraftValues({
+      custom_field_1: cf.custom_field_1 ?? '',
+      custom_field_2: cf.custom_field_2 ?? '',
+      custom_field_3: cf.custom_field_3 ?? '',
+    });
+  };
+
+  const handleCustomFieldBlur = (cf: CustomFieldData) => {
+    const payload = getValuesForRow(cf);
+    onEditCustomField(cf.id, payload);
+    setEditingCustomFieldId(null);
+  };
 
   return (
     <div className="main">
@@ -103,10 +173,15 @@ export function EarthquakeTable({
           <thead>
             <tr>
               <th>#</th>
-              {TABLE_COLUMNS.map(({ key, label, narrow }) => (
+              {TABLE_COLUMNS.filter((col) => isColumnVisible(col.key, visibleColumns)).map(({ key, label, narrow }) => (
                 <th key={key} className={narrow ? 'col--narrow' : undefined}>{label}</th>
               ))}
-              {channelKeys.map((chKey) => (
+              {CUSTOM_FIELD_COLS.filter((col) => isColumnVisible(col.key, visibleColumns)).map(({ key, label }) => (
+                <th key={key} className="col--custom-field">
+                  {label}
+                </th>
+              ))}
+              {isColumnVisible('channel_distance', visibleColumns) && channelKeys.map((chKey) => (
                 <th key={chKey} className="col--channel-dist">
                   {chKey}
                 </th>
@@ -117,6 +192,8 @@ export function EarthquakeTable({
             {pageData.map((eq, i) => {
               const rowNum = start + i + 1;
               const isSelected = selectedId === eq.id;
+              const cf = eq.code ? customFieldsByCode[eq.code] : undefined;
+              const values = cf ? getValuesForRow(cf) : null;
               return (
                 <tr
                   key={eq.id}
@@ -124,18 +201,20 @@ export function EarthquakeTable({
                   onClick={() => onSelectRow(isSelected ? null : eq.id)}
                 >
                   <td>{rowNum}</td>
-                  {TABLE_COLUMNS.map((col) => {
+                  {TABLE_COLUMNS.filter((col) => isColumnVisible(col.key, visibleColumns)).map((col) => {
                     const { key, link, fromTime, narrow } = col;
                     const tdClass = narrow ? 'col--narrow' : undefined;
                     if (fromTime && (key === 'date' || key === 'time')) {
-                      const { date, time } = formatTimestamp(eq.time);
+                      const displayMs = getDisplayTimeMs(eq.time, timeDisplayMode, utcOffsetHours);
+                      const { date, time } = formatTimestamp(String(displayMs));
                       return <td key={col.label} className={tdClass}>{key === 'date' ? date : time}</td>;
                     }
                     if (key === 'date' || key === 'time') return null;
                     const raw = eq[key as keyof Earthquake];
                     const value = String(raw ?? '');
                     if (key === 'updated') {
-                      const { date, time } = formatTimestamp(value);
+                      const displayMs = getDisplayTimeMs(value, timeDisplayMode, utcOffsetHours);
+                      const { date, time } = formatTimestamp(String(displayMs));
                       return <td key={col.label} className={tdClass}>{date} {time}</td>;
                     }
                     if (link && (key === 'url' || key === 'detail') && value) {
@@ -171,7 +250,29 @@ export function EarthquakeTable({
                     }
                     return <td key={col.label} className={tdClass}>{value || '—'}</td>;
                   })}
-                  {channelKeys.map((chKey) => (
+                  {CUSTOM_FIELD_COLS.filter((col) => isColumnVisible(col.key, visibleColumns)).map(({ key }) => (
+                      <td key={key} className="col--custom-field" onClick={(e) => e.stopPropagation()}>
+                        {cf && values ? (
+                          <input
+                            value={key === 'custom_field_1' ? values.custom_field_1 : key === 'custom_field_2' ? values.custom_field_2 : values.custom_field_3}
+                            onChange={(e) =>
+                              setDraftValues((prev) => ({
+                                ...prev,
+                                [key]: e.target.value,
+                              }))
+                            }
+                            onFocus={() => handleCustomFieldFocus(cf)}
+                            onBlur={() => handleCustomFieldBlur(cf)}
+                            className="custom-field-input"
+                          />
+                        ) : customFieldsLoading ? (
+                          '…'
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                  ))}
+                  {isColumnVisible('channel_distance', visibleColumns) && channelKeys.map((chKey) => (
                     <td key={chKey} className="col--channel-dist">
                       {formatChannelDistance(eq.channel_distance?.[chKey])}
                     </td>
