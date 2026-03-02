@@ -337,9 +337,17 @@ export function WavWaveformPanel({
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState(0);
   const [verticalZoom, setVerticalZoom] = useState(1);
+  const [verticalPan, setVerticalPan] = useState(0);
+  const [verticalPanBounds, setVerticalPanBounds] = useState<[number, number]>([0, 0]);
   const [resizeKey, setResizeKey] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const lastAmpRef = useRef<number>(0);
+  const lastPanBoundsRef = useRef<[number, number]>([0, 0]);
+  const verticalDragStartYRef = useRef<number>(0);
+  const verticalDragStartPanRef = useRef<number>(0);
+  const didVerticalDragRef = useRef<boolean>(false);
+  const scrollbarTrackRef = useRef<HTMLDivElement>(null);
   const [wavChannelNick, setWavChannelNick] = useState<string | null>(null);
   const [windowMetrics, setWindowMetrics] = useState<WindowMetrics | null>(null);
   const [redLineMs, setRedLineMs] = useState<number | null>(null);
@@ -349,6 +357,10 @@ export function WavWaveformPanel({
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
+
+  useEffect(() => {
+    setVerticalPan(0);
+  }, [zoom, pan, combinedSamples]);
 
   useEffect(() => {
     if (!selectedEarthquake || !wavChannelNick) {
@@ -545,6 +557,10 @@ export function WavWaveformPanel({
 
   const handleCanvasClick = useCallback(
     (event: React.MouseEvent<HTMLCanvasElement>) => {
+      if (didVerticalDragRef.current) {
+        didVerticalDragRef.current = false;
+        return;
+      }
       const canvas = canvasRef.current;
       const samples = combinedSamples;
       if (!canvas || !samples || !timeRange) return;
@@ -574,37 +590,43 @@ export function WavWaveformPanel({
   const handleCanvasWheel = useCallback(
     (e: React.WheelEvent<HTMLCanvasElement>) => {
       if (!combinedSamples || !timeRange) return;
-      const delta = e.deltaY > 0 ? -1 : 1;
       if (e.shiftKey) {
+        const delta = e.deltaY > 0 ? -1 : 1;
         setVerticalZoom((v) => Math.max(1, Math.min(20, v + delta)));
-      } else {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const rect = canvas.getBoundingClientRect();
-        const padding = { left: 8, right: 40 };
-        const graphW = rect.width - padding.left - padding.right;
-        if (graphW <= 0) return;
-        const x = e.clientX - rect.left - padding.left;
-        const t = Math.max(0, Math.min(1, x / graphW));
-        const totalLen = combinedSamples.length;
-        const visibleLen = Math.max(1, Math.floor(totalLen / zoom));
-        const startSample = Math.max(0, Math.floor(pan * Math.max(0, totalLen - visibleLen)));
-        const anchorSample = startSample + t * visibleLen;
-        const factor = delta > 0 ? 1.25 : 1 / 1.25;
-        setZoom((z) => {
-          const newZ = Math.max(1, Math.min(100, z * factor));
-          setPan((p) => {
-            const newVisibleLen = Math.max(1, Math.floor(totalLen / newZ));
-            const maxStart = Math.max(0, totalLen - newVisibleLen);
-            const newStart = Math.max(0, Math.min(maxStart, anchorSample - t * newVisibleLen));
-            return maxStart > 0 ? newStart / maxStart : 0;
-          });
-          return newZ;
-        });
+        e.preventDefault();
       }
-      e.preventDefault();
+      /* Horizontal zoom only via +/− buttons, not mouse wheel */
     },
-    [combinedSamples, timeRange, zoom, pan, sampleRate],
+    [combinedSamples, timeRange],
+  );
+
+  const handleCanvasMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (verticalZoom <= 1) return;
+      verticalDragStartYRef.current = e.clientY;
+      verticalDragStartPanRef.current = verticalPan;
+      didVerticalDragRef.current = false;
+      const onMove = (e2: MouseEvent) => {
+        const [minP, maxP] = lastPanBoundsRef.current;
+        const amp = lastAmpRef.current;
+        if (amp <= 0) return;
+        didVerticalDragRef.current = true;
+        const dy = e2.clientY - verticalDragStartYRef.current;
+        const panDelta = -dy / amp;
+        const newPan = Math.max(
+          minP,
+          Math.min(maxP, verticalDragStartPanRef.current + panDelta),
+        );
+        setVerticalPan(newPan);
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    },
+    [verticalZoom, verticalPan],
   );
 
   useEffect(() => {
@@ -648,9 +670,21 @@ export function WavWaveformPanel({
     }
     const range = Math.max(maxVal - minVal, 1e-6);
     const midVal = (minVal + maxVal) / 2;
+    const visibleHalfRange = range / (2 * verticalZoom);
+    const minPan = visibleHalfRange - range / 2;
+    const maxPan = range / 2 - visibleHalfRange;
+    lastPanBoundsRef.current = [minPan, maxPan];
+    setVerticalPanBounds((prev) =>
+      prev[0] === minPan && prev[1] === maxPan ? prev : [minPan, maxPan],
+    );
+    const viewCenterVal = Math.max(
+      minVal + visibleHalfRange,
+      Math.min(maxVal - visibleHalfRange, midVal + verticalPan),
+    );
+    const amp = (graphH / 2) / visibleHalfRange;
+    lastAmpRef.current = amp;
 
     const midY = padding.top + graphH / 2;
-    const amp = ((graphH / 2) * 0.85) / (range / 2) * verticalZoom;
     ctx.strokeStyle = '#c4a77d';
     ctx.lineWidth = Math.max(1, (dpr * 1.5) | 0);
     ctx.lineJoin = 'round';
@@ -658,7 +692,7 @@ export function WavWaveformPanel({
     ctx.beginPath();
     for (let i = 0; i < slice.length; i += step) {
       const x = padding.left + (i / slice.length) * graphW;
-      const y = midY - (slice[i]! - midVal) * amp;
+      const y = midY - (slice[i]! - viewCenterVal) * amp;
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
@@ -673,7 +707,7 @@ export function WavWaveformPanel({
       let lastLabelX = -minLabelSpacing - 1;
       let hourTimeMs = Math.ceil(startTimeMs / msPerHour) * msPerHour;
       ctx.fillStyle = '#d4d4d4';
-      ctx.font = '13px system-ui, sans-serif';
+      ctx.font = '16px system-ui, sans-serif';
       while (hourTimeMs <= endTimeMs) {
         const d = new Date(hourTimeMs);
         const hour = d.getHours();
@@ -800,7 +834,7 @@ export function WavWaveformPanel({
         ctx.stroke();
       }
     }
-  }, [combinedSamples, sampleRate, zoom, pan, verticalZoom, resizeKey, timeRange, windowMetrics, redLineMs]);
+  }, [combinedSamples, sampleRate, zoom, pan, verticalZoom, verticalPan, resizeKey, timeRange, windowMetrics, redLineMs]);
 
   const zoomIn = useCallback(() => {
     setZoom((z) => {
@@ -847,9 +881,61 @@ export function WavWaveformPanel({
     });
   }, [combinedSamples, timeRange, redLineMs, sampleRate]);
   const verticalZoomIn = () => setVerticalZoom((v) => Math.min(20, v + 1));
-  const verticalZoomOut = () => setVerticalZoom((v) => Math.max(1, v - 1));
+  const verticalZoomOut = () => {
+    setVerticalZoom((v) => {
+      const next = Math.max(1, v - 1);
+      if (next === 1) setVerticalPan(0);
+      return next;
+    });
+  };
   const panLeft = () => setPan((p) => Math.max(0, p - 0.1));
   const panRight = () => setPan((p) => Math.min(1, p + 0.1));
+
+  const [minPan, maxPan] = verticalPanBounds;
+  const canVerticalPan = verticalZoom > 1 && maxPan > minPan;
+  const thumbTopPercent =
+    canVerticalPan
+      ? ((verticalPan - minPan) / (maxPan - minPan)) * (100 - 100 / verticalZoom)
+      : 0;
+
+  const handleScrollbarTrackClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!canVerticalPan || !scrollbarTrackRef.current) return;
+      const rect = scrollbarTrackRef.current.getBoundingClientRect();
+      const trackH = rect.height;
+      const thumbH = trackH / verticalZoom;
+      const y = e.clientY - rect.top;
+      const t = Math.max(0, Math.min(1, (y - thumbH / 2) / (trackH - thumbH)));
+      setVerticalPan(minPan + t * (maxPan - minPan));
+    },
+    [canVerticalPan, verticalZoom, minPan, maxPan],
+  );
+
+  const handleScrollbarThumbMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      if (!canVerticalPan || !scrollbarTrackRef.current) return;
+      const trackRect = scrollbarTrackRef.current.getBoundingClientRect();
+      const trackH = trackRect.height;
+      const thumbH = trackH / verticalZoom;
+      const startY = e.clientY;
+      const startPan = verticalPan;
+      const onMove = (e2: MouseEvent) => {
+        const dy = e2.clientY - startY;
+        const panRange = maxPan - minPan;
+        const panPerPx = panRange / (trackH - thumbH);
+        const newPan = Math.max(minPan, Math.min(maxPan, startPan + dy * panPerPx));
+        setVerticalPan(newPan);
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    },
+    [canVerticalPan, verticalZoom, verticalPan, minPan, maxPan],
+  );
 
   const centerOnTarget = useCallback(() => {
     if (!combinedSamples || !timeRange || !windowMetrics) return;
@@ -968,16 +1054,39 @@ export function WavWaveformPanel({
             ref={canvasRef}
             className="wav-panel-canvas"
             onClick={handleCanvasClick}
+            onMouseDown={handleCanvasMouseDown}
             onWheel={handleCanvasWheel}
           />
+          {verticalZoom > 1 && (
+            <div
+              ref={scrollbarTrackRef}
+              className="wav-panel-vscroll-track"
+              onClick={handleScrollbarTrackClick}
+              role="scrollbar"
+              aria-label="Vertical pan"
+              aria-valuenow={verticalPan}
+              aria-valuemin={minPan}
+              aria-valuemax={maxPan}
+              title="Drag or click to pan vertically"
+            >
+              <div
+                className="wav-panel-vscroll-thumb"
+                style={{
+                  height: `${100 / verticalZoom}%`,
+                  top: `${thumbTopPercent}%`,
+                }}
+                onMouseDown={handleScrollbarThumbMouseDown}
+              />
+            </div>
+          )}
           <div className="wav-panel-zoom" title="Vertical zoom (amplitude)">
-          <button type="button" className="wav-panel-zoom-btn" onClick={verticalZoomIn} title="Vertical zoom in" aria-label="Vertical zoom in">
-            +
-          </button>
-          <button type="button" className="wav-panel-zoom-btn" onClick={verticalZoomOut} title="Vertical zoom out" aria-label="Vertical zoom out">
-            −
-          </button>
-        </div>
+            <button type="button" className="wav-panel-zoom-btn" onClick={verticalZoomIn} title="Vertical zoom in" aria-label="Vertical zoom in">
+              +
+            </button>
+            <button type="button" className="wav-panel-zoom-btn" onClick={verticalZoomOut} title="Vertical zoom out" aria-label="Vertical zoom out">
+              −
+            </button>
+          </div>
         </div>
       </div>
       <div className="wav-panel-zoom-hint">
