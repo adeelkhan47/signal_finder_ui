@@ -40,11 +40,27 @@ function App() {
   const [deltaVelocity, setDeltaVelocity] = useState('5')
   const [page, setPage] = useState(1)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [searchText, setSearchText] = useState('')
   const [customFieldsByCode, setCustomFieldsByCode] = useState<Record<string, CustomFieldData>>({})
   const [customFieldsLoading, setCustomFieldsLoading] = useState(false)
-  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(FIELDS_COLUMN_CONFIG.map((c) => [c.key, true]))
-  )
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
+    const initiallyVisible = new Set([
+      'type',
+      'date',
+      'time',
+      'mag',
+      'place',
+      'title',
+      'latitude',
+      'longitude',
+      'depth',
+      'url', // link
+      'code',
+      'custom_field_1', // custom-1
+      'custom_field_2', // custom-2
+    ])
+    return Object.fromEntries(FIELDS_COLUMN_CONFIG.map((c) => [c.key, initiallyVisible.has(c.key)]))
+  })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -122,13 +138,16 @@ function App() {
       try {
         const updated = await editCustomField(id, payload)
         setCustomFieldsByCode((prev) => ({ ...prev, [updated.code]: updated }))
-        await load()
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to update custom field')
       }
     },
     [load]
   )
+
+  useEffect(() => {
+    setPage(1)
+  }, [searchText])
 
   return (
     <div className="app">
@@ -149,6 +168,8 @@ function App() {
         }}
         visibleColumns={visibleColumns}
         onVisibleColumnsChange={setVisibleColumns}
+        searchText={searchText}
+        onSearchTextChange={setSearchText}
       />
 
       <div className="app-split">
@@ -174,6 +195,7 @@ function App() {
               customFieldsLoading={customFieldsLoading}
               onEditCustomField={handleEditCustomField}
               visibleColumns={visibleColumns}
+              searchText={searchText}
               timeDisplayMode={filters.timeDisplayMode}
               utcOffsetHours={filters.utcOffsetHours}
             />

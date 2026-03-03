@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { EarthquakeFilters, PeriodMode, RegionMode, TimeDisplayMode } from '../types/earthquake';
+import type { EarthquakeFilters, PeriodMode, RegionMode } from '../types/earthquake';
 import type { VisibleColumns } from './EarthquakeTable';
 import { ChannelsDialog } from './ChannelsDialog';
 import { FieldsDialog } from './FieldsDialog';
@@ -14,6 +14,8 @@ interface FilterPanelProps {
   onVelocityChange: (velocityTarget: string, deltaVelocity: string) => void;
   visibleColumns: VisibleColumns;
   onVisibleColumnsChange: (visible: VisibleColumns) => void;
+  searchText: string;
+  onSearchTextChange: (value: string) => void;
 }
 
 function defaultStartTime(): string {
@@ -36,13 +38,13 @@ export function FilterPanel({
   onVelocityChange,
   visibleColumns,
   onVisibleColumnsChange,
+  searchText,
+  onSearchTextChange,
 }: FilterPanelProps) {
   const isLast = filters.periodMode === 'last';
   const isFromDate = filters.periodMode === 'from_date';
   const isAllWorld = filters.regionMode === 'all_world';
   const isRegion = filters.regionMode === 'region';
-  const isLocalTime = filters.timeDisplayMode === 'local';
-  const isUtcTime = filters.timeDisplayMode === 'utc';
   const [channelsOpen, setChannelsOpen] = useState(false);
   const [fieldsOpen, setFieldsOpen] = useState(false);
 
@@ -152,43 +154,6 @@ export function FilterPanel({
         )}
       </div>
 
-      <div className="control-group control-group--inline time-group">
-        <span className="group-title-inline">Time</span>
-        <label className="radio-label">
-          <input
-            type="radio"
-            name="timeDisplay"
-            checked={isLocalTime}
-            onChange={() =>
-              onFiltersChange({ ...filters, timeDisplayMode: 'local' as TimeDisplayMode })
-            }
-          />
-          Local
-        </label>
-        <label className="radio-label">
-          <input
-            type="radio"
-            name="timeDisplay"
-            checked={isUtcTime}
-            onChange={() =>
-              onFiltersChange({ ...filters, timeDisplayMode: 'utc' as TimeDisplayMode })
-            }
-          />
-          UTC
-        </label>
-        <input
-          type="text"
-          className="utc-offset-input"
-          placeholder="UTC offset (hours)"
-          value={filters.utcOffsetHours}
-          onChange={(e) =>
-            onFiltersChange({ ...filters, utcOffsetHours: e.target.value })
-          }
-          title="Offset in hours to add to EQ time for local time (e.g. -5 or 5.5)"
-          aria-label="UTC offset hours"
-        />
-      </div>
-
       <div className="control-group region-group">
         <div className="region-group-row">
           <span className="group-title-inline">Region</span>
@@ -286,6 +251,8 @@ export function FilterPanel({
           className="search-input"
           placeholder="Search"
           aria-label="Search"
+          value={searchText}
+          onChange={(e) => onSearchTextChange(e.target.value)}
         />
         <button
           type="button"

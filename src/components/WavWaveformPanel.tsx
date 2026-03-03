@@ -700,42 +700,44 @@ export function WavWaveformPanel({
 
     const rangeMs = timeRange;
     if (rangeMs) {
-      const startTimeMs = rangeMs.start + (startSample / sampleRate) * 1000;
-      const endTimeMs = rangeMs.start + (endSample / sampleRate) * 1000;
-      const msPerHour = 3600 * 1000;
-      const minLabelSpacing = 44;
-      let lastLabelX = -minLabelSpacing - 1;
-      let hourTimeMs = Math.ceil(startTimeMs / msPerHour) * msPerHour;
-      ctx.fillStyle = '#d4d4d4';
-      ctx.font = '16px system-ui, sans-serif';
-      while (hourTimeMs <= endTimeMs) {
-        const d = new Date(hourTimeMs);
-        const hour = d.getHours();
-        const day = d.getDate();
-        const sampleAtHour = ((hourTimeMs - rangeMs.start) / 1000) * sampleRate;
-        const t = (sampleAtHour - startSample) / (endSample - startSample);
-        let x = padding.left + t * graphW;
-        if (x < padding.left || x > padding.left + graphW) {
+      const totalMs = rangeMs.end - rangeMs.start;
+      if (totalMs > 0) {
+        const startTimeMs = rangeMs.start;
+        const endTimeMs = rangeMs.end;
+        const msPerHour = 3600 * 1000;
+        const minLabelSpacing = 44;
+        let lastLabelX = -minLabelSpacing - 1;
+        let hourTimeMs = Math.ceil(startTimeMs / msPerHour) * msPerHour;
+        ctx.fillStyle = '#d4d4d4';
+        ctx.font = '16px system-ui, sans-serif';
+        while (hourTimeMs <= endTimeMs) {
+          const d = new Date(hourTimeMs);
+          const hour = d.getHours();
+          const day = d.getDate();
+          const t = (hourTimeMs - rangeMs.start) / totalMs;
+          let x = padding.left + t * graphW;
+          if (x < padding.left || x > padding.left + graphW) {
+            hourTimeMs += msPerHour;
+            continue;
+          }
+          if (x - lastLabelX < minLabelSpacing) {
+            hourTimeMs += msPerHour;
+            continue;
+          }
+          lastLabelX = x;
+          const label = `${hour} (${day})`;
+          if (x <= padding.left + 16) {
+            ctx.textAlign = 'left';
+            ctx.fillText(label, padding.left, h - 6);
+          } else if (x >= padding.left + graphW - 16) {
+            ctx.textAlign = 'right';
+            ctx.fillText(label, padding.left + graphW, h - 6);
+          } else {
+            ctx.textAlign = 'center';
+            ctx.fillText(label, x, h - 6);
+          }
           hourTimeMs += msPerHour;
-          continue;
         }
-        if (x - lastLabelX < minLabelSpacing) {
-          hourTimeMs += msPerHour;
-          continue;
-        }
-        lastLabelX = x;
-        const label = `${hour} (${day})`;
-        if (x <= padding.left + 16) {
-          ctx.textAlign = 'left';
-          ctx.fillText(label, padding.left, h - 6);
-        } else if (x >= padding.left + graphW - 16) {
-          ctx.textAlign = 'right';
-          ctx.fillText(label, padding.left + graphW, h - 6);
-        } else {
-          ctx.textAlign = 'center';
-          ctx.fillText(label, x, h - 6);
-        }
-        hourTimeMs += msPerHour;
       }
     }
     if (rangeMs && windowMetrics) {
@@ -1091,9 +1093,10 @@ export function WavWaveformPanel({
       </div>
       <div className="wav-panel-zoom-hint">
         <button type="button" className="wav-panel-nav-btn" onClick={panLeft} aria-label="Pan left">←</button>
-        <span className="wav-panel-zoom-label">Zoom: {zoom.toFixed(1)}×</span>
+        <span className="wav-panel-label">Pan</span>
         <button type="button" className="wav-panel-nav-btn" onClick={panRight} aria-label="Pan right">→</button>
         <button type="button" className="wav-panel-zoom-h-btn" onClick={zoomOut} title="Zoom out (time)" aria-label="Horizontal zoom out">−</button>
+        <span className="wav-panel-label wav-panel-label--spaced">Zoom</span>
         <button type="button" className="wav-panel-zoom-h-btn" onClick={zoomIn} title="Zoom in (time)" aria-label="Horizontal zoom in">+</button>
         <span className="wav-panel-zoom-v-label" title="Vertical zoom">V: {verticalZoom}×</span>
       </div>

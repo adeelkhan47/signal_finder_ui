@@ -87,6 +87,7 @@ interface EarthquakeTableProps {
   customFieldsLoading: boolean;
   onEditCustomField: (id: number, payload: EditCustomFieldPayload) => Promise<void>;
   visibleColumns?: VisibleColumns;
+  searchText?: string;
   timeDisplayMode?: TimeDisplayMode;
   utcOffsetHours?: string;
 }
@@ -112,6 +113,54 @@ function isColumnVisible(key: string, visibleColumns?: VisibleColumns): boolean 
   return visibleColumns[key] !== false;
 }
 
+function rowMatchesSearch(
+  eq: Earthquake,
+  cf: CustomFieldData | undefined,
+  searchText: string,
+  visibleColumns: VisibleColumns | undefined,
+  timeDisplayMode: TimeDisplayMode | undefined,
+  utcOffsetHours: string | undefined,
+  channelKeys: string[],
+): boolean {
+  const q = searchText.trim().toLowerCase();
+  if (!q) return true;
+
+  for (const col of TABLE_COLUMNS) {
+    if (!isColumnVisible(col.key, visibleColumns)) continue;
+    if (col.key === 'date' || col.key === 'time') {
+      const displayMs = getDisplayTimeMs(eq.time, timeDisplayMode, utcOffsetHours);
+      const { date, time } = formatTimestamp(String(displayMs));
+      const text = col.key === 'date' ? date : time;
+      if (text.toLowerCase().includes(q)) return true;
+      continue;
+    }
+    const raw = eq[col.key as keyof Earthquake];
+    const value = String(raw ?? '');
+    if (value.toLowerCase().includes(q)) return true;
+  }
+
+  if (cf) {
+    if (isColumnVisible('custom_field_1', visibleColumns) && (cf.custom_field_1 ?? '').toLowerCase().includes(q)) {
+      return true;
+    }
+    if (isColumnVisible('custom_field_2', visibleColumns) && (cf.custom_field_2 ?? '').toLowerCase().includes(q)) {
+      return true;
+    }
+    if (isColumnVisible('custom_field_3', visibleColumns) && (cf.custom_field_3 ?? '').toLowerCase().includes(q)) {
+      return true;
+    }
+  }
+
+  if (isColumnVisible('channel_distance', visibleColumns) && eq.channel_distance && typeof eq.channel_distance === 'object') {
+    for (const chKey of channelKeys) {
+      const text = formatChannelDistance(eq.channel_distance[chKey]);
+      if (text.toLowerCase().includes(q)) return true;
+    }
+  }
+
+  return false;
+}
+
 /** Apply time display mode: local = EQ time + UTC offset (hours), utc = raw */
 function getDisplayTimeMs(msStr: string, timeDisplayMode?: TimeDisplayMode, utcOffsetHours?: string): number {
   const n = parseInt(msStr, 10);
@@ -132,15 +181,25 @@ export function EarthquakeTable({
   customFieldsLoading,
   onEditCustomField,
   visibleColumns,
+  searchText,
   timeDisplayMode = 'local',
   utcOffsetHours = '',
 }: EarthquakeTableProps) {
   const [editingCustomFieldId, setEditingCustomFieldId] = useState<number | null>(null);
   const [draftValues, setDraftValues] = useState<EditCustomFieldPayload>({ custom_field_1: '', custom_field_2: '', custom_field_3: '' });
-  const start = (page - 1) * PAGE_SIZE;
-  const pageData = earthquakes.slice(start, start + PAGE_SIZE);
-  const totalPages = Math.max(1, Math.ceil(earthquakes.length / PAGE_SIZE));
   const channelKeys = useMemo(() => getChannelKeys(earthquakes), [earthquakes]);
+
+  const filteredEarthquakes = useMemo(() => {
+    if (!searchText || !searchText.trim()) return earthquakes;
+    return earthquakes.filter((eq) => {
+      const cf = eq.code ? customFieldsByCode[eq.code] : undefined;
+      return rowMatchesSearch(eq, cf, searchText, visibleColumns, timeDisplayMode, utcOffsetHours, channelKeys);
+    });
+  }, [earthquakes, searchText, customFieldsByCode, visibleColumns, timeDisplayMode, utcOffsetHours, channelKeys]);
+
+  const start = (page - 1) * PAGE_SIZE;
+  const pageData = filteredEarthquakes.slice(start, start + PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(filteredEarthquakes.length / PAGE_SIZE));
 
   const getValuesForRow = (cf: CustomFieldData) =>
     editingCustomFieldId === cf.id
@@ -198,7 +257,7 @@ export function EarthquakeTable({
                 <tr
                   key={eq.id}
                   className={isSelected ? 'selected' : ''}
-                  onClick={() => onSelectRow(isSelected ? null : eq.id)}
+                  onClick={() => onSelectRow(eq.id)}
                 >
                   <td>{rowNum}</td>
                   {TABLE_COLUMNS.filter((col) => isColumnVisible(col.key, visibleColumns)).map((col) => {
